@@ -1,0 +1,727 @@
+---
+title: "Morphological Data Analysis"
+output: html_notebook
+---
+Author: Indiana Riley
+
+#***Data Standardization***
+#1. Setup
+
+
+```{r}
+#set working directory
+setwd("~/Data Analysis")
+#import raw data
+raw_dat <- read.csv("data/Whole_Fish_Raw_Measurements.csv", header = TRUE)
+#import location numbers
+loc <- read.csv("data/Whole_Fish_Locations.csv", header = TRUE)
+#load required packages
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+```
+
+#2. Cleaning dataset
+
+
+```{r}
+raw_dat <- raw_dat%>%
+  filter(Species != "?") %>% # removes all species with unknown identification
+  filter(Sample_ID != "E30") %>% # removing damaged specimen
+  mutate(LogSL = log(SL)) # adding log-transformed standard length
+#adding site numbers to the main dataset
+raw_dat <- left_join(raw_dat, loc, by = "Location")
+
+#making character strings of values for use in for loops
+all_headers <- colnames(raw_dat)
+variables <- all_headers[-c(1:2, 5:13, 15, 29:30)]
+meristics <- all_headers[-c(1:2, 5, 7, 9, 15:30)]
+stand_vars <- variables[-c(1:2, 17:18)]
+loop_vars <- all_headers[c(16:28)]
+
+#log transforming all variables
+stand_dat <- raw_dat %>%
+  mutate_at(stand_vars, funs(log(.)))
+write.csv(stand_dat, file = "~/Data Analysis/results/standardizing data/log_standardized_data.csv", row.names = F)
+
+```
+
+#3. Extracting residual values
+
+This for loop goes through every log-standardized morphological measurement and:
+a) fits a linear model between the measurement and standard length 
+b)prints graphs to assess residuals, normality and homogeneity of variance
+c) extracts the linear model residuals, converts them to a data frame, and saves them as a csv
+
+You can then combine all these separate files in excel and import them back into R ( "master_sheet_residuals.csv")
+
+```{r}
+
+for (i in loop_vars){
+  print(i)
+  
+  temp_model <- lm(paste('stand_dat$', i, '~ stand_dat$SL', sep = ""), na.action = na.exclude)
+  
+  jpeg(paste('~/Data Analysis/results/standardizing data/model_', i, '.jpeg'), width = 1000, height = 500)
+  par(mfrow = c(1,3))
+  plot(temp_model, which = 1)
+  hist(temp_model$residuals) 
+  plot(temp_model, which = 2) 
+  dev.off()
+  
+  model_residuals <-resid(temp_model)
+  
+  d <- as.data.frame(model_residuals)
+  
+  colnames(d) <- as.character(i)
+  
+  write.csv(d, file = paste("~/Data Analysis/results/standardizing data/", i,"_residuals.csv", sep = ""), row.names = FALSE)
+  
+}
+
+all_reg <- read.csv("~/Data Analysis/results/standardizing data/master_sheet_residuals.csv", header = T)
+```
+
+#***Principal Component Analysis***
+
+#Documentation for creating pca dataset (do not rerun)
+
+
+```{r}
+# Reading in three files - contain only values for definite species
+#   fish_dat contains the transformed values for the morphometrics 
+#     (residuals of log-measurements on log SL)
+#   mer_dat contains the meristics for the same set of samples 
+#     (and log standardized data for morphometrics that will be cut off)
+#   loc contains numbers for each location (for use in manipulating graph colours)
+#fish_dat <- read.csv("results/residuals/master_sheet_residuals.csv", header = TRUE)
+#mer_dat <- read.csv("results/log_standardized_data.csv", header = TRUE)
+#loc <- read.csv("data/Whole_Fish_Locations.csv", header = TRUE)
+
+# converting NA values for morphometrics to 0
+#fish_dat$LJL[is.na(fish_dat$LJL)] = 0
+
+#converting NA values for meristics to pooled means and cutting off unnecessary data
+#mer_dat2 <- mer_dat %>%
+  #select(2:6, 8, 10:13) %>%
+  #group_by(Species, Location) %>%
+  #mutate_at(9:10, funs(ifelse(is.na(.), mean(., na.rm = TRUE),.)))
+
+# cutting off more unnecessary data
+#mer_dat3 <- mer_dat2 %>%
+  #ungroup() %>%
+  #select(1, 5:10)
+
+# joining the three datasets and saving as a csv to relaod next time
+#all_pca_data <- left_join(fish_dat, mer_dat3, by = "Sample_ID")
+#all_pca_data <- left_join(all_pca_data, loc, by = "Location")
+#write.csv(all_pca_data, file = "results/PCA/pca_data.csv", row.names = FALSE)
+
+```
+
+#1. Setup
+
+
+```{r}
+# this dataset contains all the residual-standardized morphometrics and unstandardized meristics for each sample (See above)
+dat_pca <- read.csv("~/2021-Docs/2021 Uni/Publishing/All R Work/results/PCA/pca_data.csv", header = TRUE)
+
+#load all packages required
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(factoextra)
+library(ggbiplot)
+
+```
+
+#2. PCA
+
+```{r}
+
+#creating individual dataframes with only morphometric and meristic variables
+morph.df <- dat_pca[c(5:17)]
+mer.df <- dat_pca[c(18:23)]
+mer.df <- mer.df %>% 
+  dplyr::rename(
+    DOR = DOR_XRAY,
+    ANA = ANA_XRAY
+  )
+#PCA - morphometric data
+morph.pca <- prcomp(morph.df, center = TRUE, scale = TRUE)
+summary(morph.pr)
+res.var <- get_pca_var(morph.pr)
+res.var$coord
+res.var$contrib
+res.var$cos2
+eig.val <- get_eigenvalue(morph.pr)
+#PCA - meristic data
+mer.pca <- prcomp(mer.df, center = TRUE, scale = TRUE)
+summary(mer.pr)
+res.var <- get_pca_var(mer.pr)
+res.var$coord
+res.var$contrib
+res.var$cos2
+
+```
+
+#3. Plotting PCA
+
+```{r}
+#loading required package for ggplot to interpret PCA objects
+library(ggfortify)
+
+#plotting morphometric PCA
+morph_pca_graph <- autoplot(morph.pca, loadings = TRUE, loadings.label = TRUE, data = dat_pca, 
+         colour = 'Species', shape = 'Species', fill = 'Species', size = 1.75,
+         loadings.label.colour = "gray20", loadings.colour = "gray20",
+         loadings.label.size = 3.5,loadings.label.fontface = "bold",
+         loadings.label.repel = TRUE,
+         loadings.label.hjust = 1) +
+  scale_shape_manual(name = "Species", values=c(21, 24)) +
+  scale_color_manual(name = "Species", values = c("darkorange1", "deepskyblue1")) +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        axis.title = element_text(size = 12),
+        axis.text = element_text(colour = "black", size = 10),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(face = "italic", size = 12))
+
+#plotting meristic PCA
+mer_pca_graph <- autoplot(mer.pca, loadings = TRUE, loadings.label = TRUE, data = dat_pca, 
+         colour = 'Species', shape = 'Species', fill = 'Species', size = 1.75,
+         loadings.label.colour = "gray20", loadings.colour = "gray20",
+         loadings.label.size = 3.5,loadings.label.fontface = "bold",
+         loadings.label.repel = TRUE,
+         loadings.label.hjust = 1) +
+  scale_shape_manual(name = "Species", values=c(21, 24)) +
+  scale_color_manual(name = "Species", values = c("darkorange1", "deepskyblue1")) +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        axis.title = element_text(size = 12),
+        axis.text = element_text(colour = "black", size = 10),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(face = "italic", size = 12))
+
+#saving plots
+ggsave("~/Data Analysis/results/PCA/morph_pca_graph.jpg", morph_pca_graph)
+ggsave("~/Data Analysis/results/PCA/mer_pca_graph.jpg", mer_pca_graph)
+
+```
+
+#***Meristics***
+
+#Documentation for creating graph dataset (do not rerun)
+
+```{r}
+#raw_data <- read.csv("data/Whole_Fish_ID_for_Museum.csv", header = T)
+#locations <- read.csv("data/Whole_Fish_Locations.csv", header = T)
+#raw_data <- raw_data %>% 
+#  filter(!is.na(Species),
+#         Sample_ID != "E28",
+#         Sample_ID != "E30")
+#raw_data <- left_join(raw_data, locations, by = "Location")
+#grouped_data <- raw_data %>% 
+#  group_by(Location_Num, Species)
+#write.csv(raw_data, file = "results/meristics/grouped_for_histograms.csv", row.names = FALSE)
+
+```
+
+#1. Setup
+
+```{r}
+#loading dataset
+grouped_for_histograms <- read.csv(file = "~/2021-Docs/2021 Uni/Publishing/All R Work/results/meristics/grouped_for_histograms.csv", header = T)
+
+#loading packages
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+
+# creating a theme for use w all histograms
+#   NOTE: In future, only use strip.text.y.left if it has moved to left side, otherwise just use strip.text.y
+theme_myhist <- theme(panel.grid = element_blank(),
+                      panel.background = element_blank(),
+                      axis.title.y = element_blank(),
+                      axis.text.y = element_blank(),
+                      axis.ticks.y = element_blank(),
+                      legend.position = "bottom",
+                      strip.placement = "inside",
+                      strip.text.y.left = element_text(angle=0, hjust=1),  
+                      strip.background = element_rect(colour = "white", fill = "white"))
+
+```
+
+#2. Cleaning dataset
+
+```{r}
+# reordering the locations according to site number for use in plotting
+graph_data <- grouped_for_histograms %>% 
+  mutate(LocSp = fct_reorder(LocSp, Location_Num),
+         Location = fct_reorder(Location, Location_Num)) 
+
+# removing unknown species from dataset
+graph_data_2 <- graph_data %>% 
+  filter(Species != "Unknown")
+graph_data_2 <- graph_data_2 %>% 
+  mutate(LocSp2 = fct_reorder(LocSp2, Location_Num)) 
+
+```
+
+#3. Creating basic histograms
+
+```{r}
+RGR1plot <- ggplot(graph_data_2, aes(x=RGR1, fill = Species)) +
+  geom_histogram(bins = 12, position = "identity", alpha = 0.5, color = "black") +
+  scale_fill_manual(values = c("darkorange1", "deepskyblue1", "darkorchid1"))+
+  facet_grid(LocSp2~., switch = "y")+ 
+  labs(x="First Arch Gill Rakers") +
+  theme_myhist
+
+RGR2plot<- ggplot(graph_data_2, aes(x=RGR2, fill = Species)) +
+  geom_histogram(bins = 12, position = "identity", alpha = 0.5, color = "black") +
+  scale_fill_manual(values = c("darkorange1", "deepskyblue1", "darkorchid1"))+
+  facet_grid(LocSp2~., switch = "y")+ 
+  labs(x="Second Arch Gill Rakers") +
+  theme_myhist 
+
+VERTplot <- ggplot(graph_data_2, aes(x=VERT, fill = Species)) +
+  geom_histogram(bins = 5, position = "identity", alpha = 0.5, color = "black") +
+  scale_fill_manual(values = c("darkorange1", "deepskyblue1", "darkorchid1"))+
+  facet_grid(LocSp2~., switch = "y")+ 
+  labs(x="Vertebrae") +
+  theme_myhist
+
+Sizeplot <- ggplot(graph_data_2, aes(x=SL, fill = Species)) +
+  geom_histogram(binwidth = 5, position = "identity", alpha = 0.5, color = "black") +
+  scale_fill_manual(values = c("darkorange1", "deepskyblue1", "darkorchid1"))+
+  facet_grid(LocSp2~., switch = "y")+ 
+  labs(x="Standard Length (mm)") +
+  theme_myhist
+
+DORplot <- ggplot(graph_data_2, aes(x=DOR_XRAY, fill = Species)) +
+  geom_histogram(bins = 3, position = "identity", alpha = 0.5, color = "black") +
+  scale_fill_manual(values = c("darkorange1", "deepskyblue1", "darkorchid1"))+
+  facet_grid(LocSp2~., switch = "y")+ 
+  labs(x="Dorsal Fin Rays") +
+  theme_myhist
+
+```
+
+#4. Creating dataframes to plot n samples and mean onto histograms
+
+```{r}
+#Summary data for reference
+summary <- graph_data %>% 
+  group_by(LocSp) %>% 
+  summarise(meanSL = mean(SL),
+            nSL = sum(!is.na(SL)),
+            meanRGR1 = mean(RGR1, na.rm = T),
+            nRGR1 = sum(!is.na(RGR1)),
+            meanRGR2 = mean(RGR2, na.rm = T),
+            nRGR2 = sum(!is.na(RGR2)),
+            meanVERT = mean(VERT),
+            nVERT = sum(!is.na(VERT)),
+            meanDOR = mean(DOR_XRAY),
+            nDOR = sum(!is.na(DOR_XRAY)))
+
+#Creating dataframe to use when labelling facets
+prac_labels <- data.frame(LocSp2 = c("FA", "NBA", "NBM", "EA", "EM", "VM", "SAM", "PM"), 
+                          label = c("NSW", "NSW", "NSW", "NSW", "NSW", "VIC", "SA", "WA"),
+                          Species = c("australis", "australis", "melanochir", "australis", "melanochir", "melanochir", "melanochir", "melanochir"),
+                          nSL = c("n = 10", "n = 9", "n = 1", "n = 11", "n = 11", "n = 28", "n = 17", "n = 24"),
+                          nRGR1 = c("n = 10", "n = 9", "n = 1", "n = 9", "n = 7", "n = 28", "n = 17", "n = 24"),
+                          nRGR2 = c("n = 10", "n = 9", "n = 1", "n = 9", "n = 8", "n = 28", "n = 17", "n = 24"),
+                          nVERT = c("n = 10", "n = 9", "n = 1", "n = 11", "n = 11", "n = 28", "n = 17", "n = 24"),
+                          nDOR = c("n = 10", "n = 9", "n = 1", "n = 11", "n = 11", "n = 28", "n = 17", "n = 24"),
+                          LocNum = c("1", "2", "2", "3", "3", "4", "5", "6"))
+prac_labels <- prac_labels %>% 
+  mutate(LocSp2 = fct_reorder(LocSp2, LocNum))
+
+#creating dataframe to use when plotting mean vline
+means <- graph_data_2 %>% 
+  dplyr::group_by(LocSp2) %>% 
+  dplyr::summarise(meanSL = mean(SL),
+            meanRGR1 = mean(RGR1, na.rm = T),
+            meanRGR2 = mean(RGR2, na.rm = T),
+            meanVERT = mean(VERT),
+            meanDOR = mean(DOR_XRAY))
+join_labels <- data.frame(LocSp2 = c("FA", "NBA", "NBM", "EA", "EM", "VM", "SAM", "PM"),
+                          Species = c("australis", "australis", "melanochir", "australis", "melanochir", "melanochir", "melanochir", "melanochir"),
+                          LocNum = c("1", "2", "2", "3", "3", "4", "5", "6"))
+means <- left_join(means, join_labels, by = "LocSp2")
+means <- means %>% 
+  mutate(LocSp2 = fct_reorder(LocSp2, LocNum))
+
+```
+
+#5. Final histograms
+
+NOTE: these histograms were then imported into Adobe Illustrator to edit site labels and compile separate graphs into a single image for publication
+
+```{r}
+RGR1plot_annotated <- RGR1plot +
+  geom_text(x = 38, y = 5, aes(label = nRGR1), size = 3.6, data = prac_labels) +
+  annotate("text", x = 30, y = 5, label = " ") +
+  geom_vline(data = means, aes(xintercept=meanRGR1, colour = Species), linetype = "dashed", size = 1) +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(face = "italic", size = 12),
+        legend.title = element_text(size = 13))
+RGR2plot_annotated <- RGR2plot +
+  geom_text(x = 32.5, y = 5, aes(label = nRGR2), size = 3.6, data = prac_labels) +
+  annotate("text", x = 32.5, y = 5, label = " ") +
+  geom_vline(data = means, aes(xintercept=meanRGR2, colour = Species), linetype = "dashed", size = 1) +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(face = "italic", size = 12),
+        legend.title = element_text(size = 13))
+VERTplot_annotated <- VERTplot +
+  geom_text(x = 59, y = 10, aes(label = nVERT), size = 3.6, data = prac_labels) +
+  annotate("text", x = 59, y = 10, label = " ") +
+  geom_vline(data = means, aes(xintercept=meanVERT, colour = Species), linetype = "dashed", size = 1) +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(face = "italic", size = 12),
+        legend.title = element_text(size = 13))
+SLplot_annotated <- Sizeplot +
+  geom_text(x = 300, y = 5, aes(label = nSL), size = 3.6, data = prac_labels) +
+  annotate("text", x = 300, y = 5, label = " ") +
+  geom_vline(data = means, aes(xintercept=meanSL, colour = Species), linetype = "dashed", size = 1) +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(face = "italic", size = 12),
+        legend.title = element_text(size = 13))
+DORplot_annotated <- DORplot +
+  geom_text(x = 15, y = 12, aes(label = nDOR), size = 3.6, data = prac_labels) +
+  annotate("text", x = 17, y = 15, label = " ") +
+  geom_vline(data = means, aes(xintercept=meanDOR, colour = Species), linetype = "dashed", size = 1) +
+  theme(axis.text = element_text(colour = "black"),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(face = "italic", size = 12),
+        legend.title = element_text(size = 13))
+
+#saving plots
+ggsave(RGR1plot_annotated, file = "~/Data Analysis/results/meristics/RGR1_histogram.jpg")
+ggsave(RGR2plot_annotated, file = "~/Data Analysis/results/meristics/RGR2_histogram.jpg")
+ggsave(VERTplot_annotated, file = "~/Data Analysis/results/meristics/VERT_histogram.jpg")
+ggsave(SLplot_annotated, file = "~/Data Analysis/results/meristics/SL_histogram.jpg")
+ggsave(DORplot_annotated, file = "~/Data Analysis/results/meristics/DOR_histogram.jpg")
+
+```
+
+
+#***Morphometrics***
+
+#1. Setup
+
+```{r}
+#reloading raw dataset
+raw_dat <- read.csv("~/Data Analysis/data/Whole_Fish_Raw_Measurements.csv", header = TRUE)
+
+#loading packages
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(broom)
+
+```
+
+#2. Cleaning dataset
+
+```{r}
+# removing unknown species and damaged specimens
+raw_dat_2 <- raw_dat %>% 
+  filter(Species != "?",
+         Species != "NA",
+         Sample_ID != "E30")
+
+# setting species as a factor
+raw_dat_2$Species <- factor(raw_dat_2$Species)
+
+# calculating "postorbital" length, i.e. head length - upper jaw length - preorbital length - orbital length
+raw_dat_2 <- raw_dat_2 %>% 
+  mutate(POSTORB = HDL - UJL - PREORB - ORB)
+
+# creating new long-standardized dataframe
+logdata <- raw_dat_2 %>% 
+  dplyr::select(2:4, 14, 16:28, 31) %>%
+  mutate_if(is.numeric, log)
+
+```
+
+#3. Testing ANCOVA assumptions
+
+This code was run individually for all morphometric variables.
+"UJL" is put in the following example.
+
+```{r}
+#1. Linearity - scatterplots were created and saved in "data standardization" step 3
+
+#2. Homogeneity of regression slopes 
+logdata %>% 
+  anova_test(UJL ~ Species*SL)
+
+#3. normality of residuals (want shapiro test to not be significant)
+testmodel <- lm(UJL ~ SL*Species, data = postorb_data)
+model.metrics <- augment(testmodel) %>% 
+  select(-.hat, -.sigma, -.fitted, -.se.fit)
+head(model.metrics)
+shapiro_test(model.metrics$.resid)
+hist(logdata$UJL)
+
+#4. Homogeneity of variance (also want to not be signif)
+model.metrics %>% levene_test(.resid ~ Species)
+
+# 5. outliers
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>%
+  as.data.frame()
+# creating seperate dataframes with outliers removed for variables where outliers were identified 
+hdl_data <- logdata %>% 
+  filter(Sample_ID != "SA19")
+abase_data <- logdata %>% 
+  filter(Sample_ID != "E24",
+         Sample_ID != "E29")
+p1p2_data <- logdata %>% 
+  filter(Sample_ID != "E33")
+orb_data <- logdata %>% 
+  filter(Sample_ID != "E32",
+         Sample_ID != "E40")
+preorb_data <- logdata %>% 
+  filter(Sample_ID != "E27",
+         Sample_ID != "WA20")
+postorb_data <- logdata %>% 
+  filter (Sample_ID != "V13")
+
+```
+
+#4. ANCOVA
+All results were saved as plain text before manual input into a table 
+
+```{r}
+ujl.res.aov <- logdata %>% 
+  anova_test(UJL ~ SL + Species)
+get_anova_table(ujl.res.aov)
+
+ujw.res.aov <- logdata %>% 
+  anova_test(UJW ~ SL + Species)
+get_anova_table(ujw.res.aov)
+
+hdl.res.aov <- hdl_data %>% 
+  anova_test(HDL ~ SL + Species)
+get_anova_table(hdl.res.aov)
+
+p1l.res.aov <- logdata %>% 
+  anova_test(P1L ~ SL + Species)
+get_anova_table(p1l.res.aov)
+
+dbase.res.aov <- logdata %>% 
+  anova_test(DBASE ~ SL + Species)
+get_anova_table(dbase.res.aov)
+
+abase.res.aov <- abase_data %>% 
+  anova_test(ABASE ~ SL + Species)
+get_anova_table(abase.res.aov)
+
+p1p2.res.aov <- p1p2_data %>% 
+  anova_test(P1.P2 ~ SL + Species)
+get_anova_table(p1p2.res.aov)
+
+p2c.res.aov <- logdata %>% 
+  anova_test(P2.C ~ SL + Species)
+get_anova_table(p2c.res.aov)
+
+bdp1.res.aov <- logdata %>% 
+  anova_test(BD.P1 ~ SL + Species)
+get_anova_table(bdp1.res.aov)
+
+bdp2.res.aov <- logdata %>% 
+  anova_test(BD.P2 ~ SL + Species)
+get_anova_table(bdp2.res.aov)
+
+orb.res.aov <- orb_data %>% 
+  anova_test(ORB ~ SL + Species)
+get_anova_table(orb.res.aov)
+
+preorb.res.aov <- preorb_data %>% 
+  anova_test(PREORB ~ SL + Species)
+get_anova_table(preorb.res.aov)
+
+postorb.res.aov <- postorb_data %>% 
+  anova_test(POSTORB ~ SL + Species)
+get_anova_table(postorb.res.aov)
+
+```
+
+#5. Violin plots
+#a) Setup
+
+```{r}
+#loading required packages
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+
+#loading dataset - this contains the residuals from the "Data Standardization"section, as well as grouping variables (location number and location + species)
+boxdata <- read.csv("~/2021-Docs/2021 Uni/Publishing/All R Work/data/violin_plot_data.csv", header = T)
+
+# creating a theme to be used on all violin plots
+theme_violin <- theme(panel.grid = element_blank(),
+                      panel.background = element_blank(),
+                      legend.position = "bottom",
+                      strip.placement = "inside",
+                      strip.text.y.left = element_text(angle=0, hjust=1),  
+                      strip.background = element_rect(colour = "white", fill = "white"),
+                      axis.text.x = element_text(colour = "black"),
+                      axis.title = element_text(size = 14),
+                      legend.text = element_text(face = "italic", size = 12),
+                      legend.title = element_text(size = 13))
+```
+
+#b) Cleaning dataset
+
+```{r}
+# Editing the grouping variables so they can be used to facet plots
+boxdata <- boxdata %>% 
+  mutate(LocSp = fct_reorder(LocSp, Location_Num),
+         Location = fct_reorder(Location, Location_Num))
+
+#creating shorter names for values in plots
+join_labels <- data.frame(LocSp2 = c("FA", "NBA", "NBM", "EA", "EM", "VM", "SAM", "PM"),
+                          LocSp = c("Forster-australis", "Nelson Bay-australis", "Nelson Bay-melanochir", 
+                                    "Eden-australis", "Eden-melanochir", "Corner Inlet, Victoria-melanochir",
+                                    "Adelaide, South Australia-melanochir", "Perth, Western Australia-melanochir"))
+
+boxdata <- left_join(boxdata, join_labels, by = "LocSp")
+boxdata <- boxdata %>% 
+  mutate(LocSp2 = fct_reorder(LocSp2, Location_Num))
+
+# creating seperate datasets with outliers removed for variables with outliers identified through ANCOVA
+preorb_data <- boxdata %>% 
+  filter(Sample_ID != "E27",
+         Sample_ID != "WA20")
+orb_data <- boxdata %>%
+  filter(Sample_ID != "E32",
+         Sample_ID != "E40")
+hdl_data <- boxdata %>% 
+  filter(Sample_ID != "SA19")
+
+```
+
+#c) creating and saving plots
+
+NOTE: these violin plots were then imported into Adobe Illustrator to edit site labels, manually add sample numbers, and compile separate graphs into a single image for publication
+
+```{r}
+# Violin plots split by location
+
+final_preorb <- ggplot(preorb_data, aes(x=PREORB, y=LocSp2, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev(levels(preorb_data$LocSp2)))+
+  labs(x="Preorbital Length") +
+  theme_violin
+
+
+final_orb <- ggplot(orb_data, aes(x=ORB, y=LocSp2, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev(levels(orb_data$LocSp2)))+
+  labs(x="Orbital Length") +
+  theme_violin
+
+final_hdl <- ggplot(hdl_data, aes(x=HDL, y=LocSp2, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev(levels(hdl_data$LocSp2)))+
+  labs(x="Head Length") +
+  theme_violin
+
+final_ujl <- ggplot(boxdata, aes(x=UJL, y=LocSp2, fill = Species, colour = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev(levels(boxdata$LocSp2)))+
+  labs(x="Upper Jaw Length") +
+  theme_violin
+
+final_p1l <- ggplot(boxdata, aes(x=P1L, y=LocSp2, fill = Species, colour = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev(levels(boxdata$LocSp2)))+
+  labs(x="Pectoral Fin Length") +
+  theme_violin
+
+# Violin plots split by species
+
+sp_final_preorb <- ggplot(preorb_data, aes(x=PREORB, y=Species, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev)+
+  labs(x="Preorbital Length") +
+  theme_violin
+
+sp_final_orb <- ggplot(orb_data, aes(x=ORB, y=Species, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev)+
+  labs(x="Orbital Length") +
+  theme_violin
+
+sp_final_hdl <- ggplot(hdl_data, aes(x=HDL, y=Species, colour = Species, fill = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev)+
+  labs(x="Head Length") +
+  theme_violin
+
+sp_final_ujl <- ggplot(boxdata, aes(x=UJL, y=Species, fill = Species, colour = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev)+
+  labs(x="Upper Jaw Length") +
+  theme_violin
+
+sp_final_p1l <- ggplot(boxdata, aes(x=P1L, y=Species, fill = Species, colour = Species)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.2, fill = "white", colour = "black") +
+  scale_colour_manual(values = c("darkorange1", "deepskyblue1")) +
+  scale_fill_manual(values = c("#FFCC99", "#99CCFF")) +
+  scale_y_discrete(limits = rev)+
+  labs(x="Pectoral Fin Length") +
+  theme_violin
+
+#saving all plots 
+ggsave("~/Data Analysis/results/morphometrics/loc_preorb.jpg", plot = final_preorb)
+ggsave("~/Data Analysis/results/morphometrics/loc_orb.jpg", plot = final_orb)
+ggsave("~/Data Analysis/results/morphometrics/loc_hdl.jpg", plot = final_hdl)
+ggsave("~/Data Analysis/results/morphometrics/loc_ujl.jpg", plot = final_ujl)
+ggsave("~/Data Analysis/results/morphometrics/loc_p1l.jpg", plot = final_p1l)
+ggsave("~/Data Analysis/results/morphometrics/spp_preorb.jpg", plot = sp_final_preorb)
+ggsave("~/Data Analysis/results/morphometrics/spp_orb.jpg", plot = sp_final_orb)
+ggsave("~/Data Analysis/results/morphometrics/spp_hdl.jpg", plot = sp_final_hdl)
+ggsave("~/Data Analysis/results/morphometrics/spp_ujl.jpg", plot = sp_final_ujl)
+ggsave("~/Data Analysis/results/morphometrics/spp_p1l.jpg", plot = sp_final_p1l)
+```
+
+
+
+

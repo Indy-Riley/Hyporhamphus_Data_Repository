@@ -1,0 +1,160 @@
+---
+title: "Classification Tree"
+output: html_notebook
+---
+
+Author: Indiana Riley
+
+#1. Setup
+
+```{r}
+setwd("~/Data Analysis")
+
+# importing raw measurements
+raw_dat <- read.csv("~/Data Analysis/data/Whole_Fish_Raw_Measurements.csv", header = TRUE)
+
+# loading required packages
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+
+
+```
+
+#2. Creating and cleaning datasets
+
+```{r}
+# removing unknown species and damaged specimens
+
+raw_dat <- raw_dat%>%
+  filter(Species != "?") %>%
+  filter(Sample_ID != "E30")
+
+# Creating a dataset with all morphometric measurements divided by standard length
+
+  ##a) Creating a list of column name & a list of all the measurements being standardized
+all_headers <- colnames(raw_dat)
+all_headers
+
+variables <- all_headers[-c(1:15, 29:30)]
+variables
+
+  ##b) Writing a function to standardize by SL
+standard_SL <- function(x, na.rm = FALSE)
+ (x / raw_dat$SL)
+
+  ##c) Creating and saving SL-ratio dataset
+
+standardized_dat <- raw_dat %>%
+  mutate_at(variables, standard_SL)
+
+write.csv(standardized_dat, "~/Data Analysis/results/classification trees/data_simple_standardized.csv")
+
+# Creating a dataset with ratios constructed between key variables identified in PCA and ANCOVA
+
+  ##a) constructing ratios
+ratio_dat <- raw_dat %>%
+  mutate(ujl_on_ujw = UJL/UJW) %>%
+  mutate(ujl_on_hdl = UJL/HDL) %>%
+  mutate(ujw_on_hdl = UJW/HDL) %>%
+  mutate(ujw_on_bd.p1 = UJW/BD.P1) %>%
+  mutate(ljl_on_hdl = LJL/HDL) %>%
+  mutate(preorb_on_orb = PREORB/ORB) %>%
+  mutate(preorb_on_hdl = PREORB/HDL) %>%
+  mutate(orb_on_hdl = ORB/HDL) %>%
+  mutate(preorb_on_bd.p1 = PREORB/BD.P1) %>%
+  mutate(orb_on_bd.p1 = ORB/BD.P1)
+
+  ##b) creating and saving ratio dataset
+ratio_dat <- ratio_dat %>%
+  select(Green_ID:Date_Collected, ujl_on_ujw:orb_on_bd.p1)
+write.csv(ratio_dat, file = "~/Data Analysis/results/classification trees/ratio_data.csv", row.names = FALSE)
+
+```
+
+#3. Classification trees
+
+Note that all trees were imported into Adobe Illustrator where they were compiled into one image and colours/shapes were edited for clarity in final publication
+
+```{r}
+# culling data to only include NSW and Victoria samples, and exclude ljl
+standardized_dat <- standardized_dat %>% 
+  filter(Location != "Adelaide, South Australia",
+         Location != "Perth, Western Australia",
+         Sample_ID != "NB40")
+ratio_dat <- ratio_dat %>%
+  dplyr::select(-c(ljl_on_hdl)) %>% 
+  filter(Location != "Adelaide, South Australia",
+         Location != "Perth, Western Australia",
+         Sample_ID != "NB40")
+
+
+# A) Tree with standard length ratios
+tree <- rpart(Species ~ UJL + UJW + HDL + P1L + DBASE + ABASE + P1.P2 + P2.C + BD.P1 + BD.P2 + ORB + PREORB, data= standardized_dat)
+printcp(tree)
+summary(tree)
+best <- tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"]
+
+  #produced a pruned tree based on the best cp value
+pruned_tree <- prune(tree, cp=best)
+printcp(pruned_tree)
+summary(pruned_tree)
+  #plot the pruned tree
+jpeg("~/Data Analysis/results/classification trees/SL_measurements.jpg", width = 350, height = 350)
+rpart.plot(tree,
+           faclen=1,
+           extra=8,
+           type = 5,
+           roundint=F, 
+           digits=2,
+           box.palette = "RdBu")
+dev.off()
+
+# B) Tree with meristic counts
+tree <- rpart(Species ~ DOR_XRAY + ANA_XRAY + P1 + VERT + RGR1 + RGR2, data= culled_dat)
+printcp(tree)
+summary(tree)
+best <- tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"]
+pruned_tree <- prune(tree, cp=best)
+printcp(pruned_tree)
+jpeg("~/Data Analysis/results/classification trees/mer_measurements.jpg", width = 350, height = 350)
+rpart.plot(pruned_tree,
+           faclen=1,
+           extra=8,
+           type = 5,
+           roundint=F,
+           digits=2,
+           box.palette = "RdBu")
+dev.off()
+
+# Tree with ratios of key measurements
+
+ratio_dat <- ratio_dat %>% 
+  dplyr::select(-c(Sample_ID, Location, Date_Collected))
+
+tree <- rpart(Species~., data = ratio_dat)
+printcp(tree)
+summary(tree)
+best <- tree$cptable[which.min(tree$cptable[,"xerror"]),"CP"]
+pruned_tree <- prune(tree, cp=best)
+printcp(pruned_tree)
+rpart.plot(pruned_tree,
+           faclen=1,
+           extra=8, 
+           type = 5, 
+           roundint=F,
+           digits=2,
+           box.palette = "RdBu") 
+rpart.rules(tree)
+jpeg("~/Data Analysis/results/classification trees/ratio_measurements.jpg", width = 350, height = 350)
+rpart.plot(pruned_tree,
+           faclen=1, 
+           extra=1,
+           type = 5,
+           roundint=F,
+           digits=2,
+           box.palette = "RdBu")
+dev.off()
+
+```
+
