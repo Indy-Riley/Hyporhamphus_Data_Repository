@@ -1,0 +1,127 @@
+---
+title: "Otolith Data Analysis"
+output: html_notebook
+---
+
+Author: Indiana Riley
+
+This markdown follows the instructions outlined in Libungan & Pálsson, 2015. See this paper for full instruction and explanation:
+Libungan, L. A., & Pálsson, S. (2015). ShapeR: An R package to study otolith shape variation among fish populations. PLoS ONE, 10(3). https://doi.org/10.1371/journal.pone.0121102
+
+
+#1. Setup
+
+```{r}
+library(shapeR)
+
+FISH <- read.csv("C:/Users/Indy/Desktop/ShapeAnalysis5/FISH.csv", header = T)
+
+myshape = shapeR("C:/Users/Indy/Desktop/ShapeAnalysis5", "FISH.csv")
+
+```
+
+#2. Creating outline reconstructions
+(only need to run this once and then save)
+
+```{r}
+myshape = detect.outline(myshape,threshold=0.2,write.outline.w.org=TRUE)
+
+save(myshape, file = "newshapefile.RData")
+
+load("newshapefile.RData")
+
+myshape = remove.outline(myshape, "AU", "TG11_Ha6173")
+myshape = remove.outline(myshape, "AU", "TG18_Ha6180")
+myshape = remove.outline(myshape, "AU", "S9_Ha6211")
+myshape = remove.outline(myshape, "AU", "K7_Ha5826")
+myshape = remove.outline(myshape, "AU", "U10_Ha5870")
+myshape = remove.outline(myshape, "AU", "NB40")
+myshape = remove.outline(myshape, "ME", "V01")
+myshape = remove.outline(myshape, "ME", "V06")
+myshape = remove.outline(myshape, "ME", "V09")
+myshape = remove.outline(myshape, "ME", "SA16")
+myshape = remove.outline(myshape, "ME", "SA17")
+myshape = remove.outline(myshape, "ME", "SA20")
+
+myshape = smoothout(myshape, n = 100)
+
+```
+
+#3. Generating shape coefficients
+
+```{r}
+myshape = generateShapeCoefficients(myshape)
+
+myshape = enrich.master.list(myshape)
+
+getMeasurements(myshape)
+
+# the code below extracts the summary statistics for each otolith as a csv
+
+measurements <- getMeasurements(myshape)
+masterlist <- getMasterlist(myshape)
+masterlist <- masterlist[1:20]
+write.csv(masterlist, file = "otolith_measurements.csv", row.names = FALSE)
+
+```
+
+#4. Graphs
+
+```{r}
+tapply(getMeasurements(myshape)$otolith.area, getMasterlist(myshape)$species, mean)
+tapply(getMeasurements(myshape)$otolith.area, getMasterlist(myshape)$state, mean)
+
+plotWaveletShape(myshape, "species", show.angle = TRUE, lwd = 2, lty = 1, col = c("darkorange1", "deepskyblue1"))
+plotWaveletShape(myshape, "state", show.angle = TRUE, lwd = 2, lty = 1, col = 4:9)
+
+
+myshape = stdCoefs(myshape, classes = "species", "length_cm", bonferroni = FALSE)
+est.list = estimate.outline.reconstruction(myshape)
+outline.reconstruction.plot(est.list, max.num.harmonics = 15)
+par(mfrow = c(1,1))
+plotWavelet(myshape, level = 5, class.name = "species", useStdcoef = TRUE)
+
+```
+
+#5. Analysis
+
+Note that random forest and permanova were not used in Libungan & Pálsson, 2015
+
+```{r}
+# capscale analysis of variance
+
+library(vegan)
+cap.res = capscale(getStdWavelet(myshape) ~ getMasterlist(myshape)$species)
+anova(cap.res, by = "terms", step = 1000)
+
+# Random forest 
+library(randomForest)
+
+stdw = getStdWavelet(myshape)
+species = factor(getMasterlist(myshape)$species)
+dd = data.frame(stdw = stdw,species = species)
+
+out_E <- randomForest(formula = as.factor(species)~., data=dd, ntrees=5000)
+
+out_E
+importance(out_E)
+par(mfrow=c(1,1))
+plot(out_E)
+
+# PERMANOVA
+## Checking assumptions
+dist_euc <- vegdist(getStdWavelet(myshape), method = "euclidean")
+Disp <- betadisper(dist_euc, getMasterlist(myshape)$species)
+
+anova(Disp) #(P = 0.1089) # Therefore assumption for PERMANOVA is met
+
+## Running test
+dist_euc <- vegdist(getStdWavelet(myshape), method = "euclidean")
+adonis(dist_euc ~ getMasterlist(myshape)$species)
+
+```
+
+
+
+
+
